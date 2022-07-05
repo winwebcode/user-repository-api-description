@@ -1,0 +1,91 @@
+Комментарии к тестовому заданию с неполными примерами реализации, вполне поможет понять ход мыслей.
+
+Задача: необходимо реализовать справочник пользователей с возможностью хранения данных в
+разных источниках (БД, кэш, json-файл, xlsx-файл), чтобы данные мог вносить только
+авторизованный пользователь.
+
+таблица userhandbook - ФИО (уникальное по условию тестового), почта и номер уникальные потому что не должны повторяться от пользователя к пользователю. Пример миграции.
+
+public function up()
+{
+	Schema::create('handbook', function (Blueprint $table) {
+		$table->id();
+		$table->string('full_name')->unique();
+		$table->string('email')->unique();
+		$table->integer('phone')->unique(); //формат номера без плюсов и скобок
+		$table->timestamps();
+	});
+}
+
+При реализации исхожу из того что мы хотели хранить данные допустим в Excel (xlsx), а потом их стало много, решили хранить в БД (MySQL). Чтобы сделать такой переход безболезненным я бы предложил использовать паттерн Repository.
+Если взять Репозиторий как абстракцию у него есть основные возможности - получить и сохранить данные. Делаем интерфейс Репозиторий с базовыми методами saveData() , getData(). Данные методы будут реализовываться в классах хранилищах.
+
+interface Repository
+{
+    public function saveData();
+    public function getData();
+}
+
+class DatabaseRepository implements Repository
+{
+    use HasFactory;
+    public function saveData()
+    {
+        Handbook::updateOrInsert(
+            ['full_name'],
+            ['phone', 'email'],
+        );
+    }
+
+    public function getData()
+    {
+        return Handbook::all(); //при большой таблице бить данные на куски через chunk()
+    }
+}
+
+
+Для создания хранилищ можно использовать фабрику. Тип хранилища $type прописать в отдельный конфиг.
+
+class RepositoryFactory
+{
+    public static function create($type)
+    {
+        switch ($type) {
+            case 'json':
+                $repository = new JsonRepository();
+                break;
+            case 'database':
+                $repository = new DatabaseRepository();
+                break;
+            case 'xlsx':
+                //code
+            default:
+                throw new Exception('Incorrect type of Repository');
+        }
+        return $repository;
+    }
+}
+
+
+
+При извлечении данных:
+
+Получаем тип хранилища $type из конфига, допустим это будет database
+
+$type = getRepositoryType(); //достаёт тип репозитория из конфига
+$repo = RepositoryFactory:create($type); //возвращает экземпляр репозитория
+$result = $repo->getData(); //получаем данные
+Возвращаем json с даннными и кодом ответа 200.
+
+
+При добавлении данных:
+
+Для авторизации по API - cделать какой-либо личный кабинет для выдачи токенов юзеру, генерировать через OAuthProvider::generateToken, токен сохранять в поле api_token таблицы users, при получении данных брать токен Bearer из заголовка, проверять есть ли такой токен в таблице users, написав свой middleware. 
+Сделать endpoint для обработки полученных данных (ФИО, почта, номер), валидации и добавления.
+
+
+$data = $request->validated(); //валидация формы в Request
+$type = getRepositoryType(); //достаёт тип репозитория из конфига
+$repo = RepositoryFactory:create($type); //возвращает экземпляр репозитория
+$repo->saveData($data);
+Возвращать json с кодом ответа 200 в случае успеха.
